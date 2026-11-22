@@ -179,6 +179,7 @@ mod footer_hint;
 mod key_hint;
 mod keymap;
 mod keymap_setup;
+mod kitty_math;
 mod line_truncation;
 pub(crate) mod live_wrap;
 mod local_settings;

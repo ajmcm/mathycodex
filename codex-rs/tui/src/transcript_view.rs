@@ -465,6 +465,25 @@ impl TranscriptView {
             let entry_y = y;
             y += rows.len() as u16;
             let visible = &rows[0];
+            for (start, image) in visible.layout.math_image_regions() {
+                let first = visible.row.max(start);
+                let last = (visible.row + rows.len()).min(start + usize::from(image.rows));
+                if first >= last {
+                    continue;
+                }
+                placements.push(crate::transcript_image::ImagePlacement {
+                    area: Rect::new(
+                        self.area.x + 2,
+                        entry_y + (first - visible.row) as u16,
+                        image.columns,
+                        (last - first) as u16,
+                    ),
+                    image,
+                    first_row: first - start,
+                    file: None,
+                    terminal_id: None,
+                });
+            }
             let Some(image) = visible.layout.visible_image() else {
                 continue;
             };

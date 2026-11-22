@@ -1,3 +1,18 @@
+# MathyCodex
+
+This fork adds Kitty graphics rendering for `$$…$$` and `\[…\]` LaTeX in completed
+Codex replies. It tells the model that math rendering is available, so you can ask about
+mathematics naturally.
+
+**Supported platform: macOS. Requires [Kitty](https://sw.kovidgoyal.net/kitty/) for graphical math.** Install it
+with `brew install --cask kitty`. [Install a release build](MATHYCODEX.md#install-a-release-build-macos)
+using the documented Cargo build and file-copy commands, then open Kitty and run **`mathycodex`**.
+The instructions show every installation step; the convenience installer is optional.
+
+The upstream Codex README follows. Its installers install the official Codex build.
+
+---
+
 <p align="center"><strong>Codex CLI</strong> is a coding agent from OpenAI that runs locally on your computer.
 <p align="center">
   <img src="https://github.com/openai/codex/blob/main/.github/codex-cli-splash.png" alt="Codex CLI splash" width="80%" />

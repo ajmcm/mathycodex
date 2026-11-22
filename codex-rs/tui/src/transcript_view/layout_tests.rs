@@ -305,3 +305,129 @@ fn fullscreen_image_previews_follow_layout_without_entering_text_surfaces() {
     assert_eq!(buf, text_only);
     assert!(view.image_placements().is_empty());
 }
+
+fn math_layout(width: u16) -> TextLayout {
+    use crate::kitty_math::PreparedMath;
+    use crate::pets::ImageProtocol;
+    use crate::transcript_image::TranscriptImage;
+    let formula = |marker: &str, source: &str| PreparedMath {
+        marker: marker.to_owned(),
+        source: source.to_owned(),
+        image: Arc::new(TranscriptImage {
+            protocol: ImageProtocol::Kitty,
+            columns: 12,
+            rows: 3,
+            pixels: image::RgbaImage::new(96, 48),
+            cell_width: 8,
+            cell_height: 16,
+        }),
+    };
+    TextLayout::with_math_lines(
+        vec![
+            "• before".into(),
+            "  MX1".into(),
+            "  between".into(),
+            "  MX2".into(),
+            "  after".into(),
+        ],
+        width,
+        vec![
+            formula("MX1", r"$$\frac{1}{2}$$"),
+            formula("MX2", "$$\nx^2\n$$"),
+        ],
+    )
+}
+
+#[test]
+fn kitty_math_keeps_source_and_reserves_rows_between_prose() {
+    let layout = math_layout(40);
+    assert!(!layout.text().contains("MX1"));
+    assert!(!layout.text().contains("MX2"));
+    assert!(layout.text().contains(r"$$\frac{1}{2}$$"));
+    assert!(layout.text().contains("$$\nx^2\n$$"));
+    assert_eq!(
+        layout
+            .math_image_regions()
+            .iter()
+            .map(|(row, _)| *row)
+            .collect::<Vec<_>>(),
+        vec![1, 5]
+    );
+    assert_eq!(layout.row_count(), 9);
+    let mut buffer = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 40, 9));
+    layout.render(buffer.area, &mut buffer, 0);
+    let row = |index| {
+        (0..40)
+            .map(|x| buffer[(x, index)].symbol())
+            .collect::<String>()
+    };
+    assert!(row(0).contains("before"));
+    assert!(row(4).contains("between"));
+    assert!(row(8).contains("after"));
+    assert!(!row(1).contains("frac"));
+}
+
+#[test]
+fn kitty_math_rewrap_falls_back_without_losing_source_and_restores_images() {
+    let layout = math_layout(40);
+    let narrow = layout.rewrap(10);
+    assert!(narrow.math_image_regions().is_empty());
+    assert_eq!(narrow.text(), layout.text());
+    let wide = narrow.rewrap(40);
+    assert_eq!(wide.text(), layout.text());
+    assert_eq!(wide.row_count(), layout.row_count());
+    assert_eq!(wide.math_image_regions().len(), 2);
+    let spaced = wide.with_leading_spacer();
+    assert_eq!(spaced.math_image_regions()[0].0, 2);
+}
+
+#[test]
+fn kitty_math_placements_clip_each_equation_to_the_viewport() {
+    let layout = Arc::new(math_layout(40));
+    let mut view = TranscriptView::default();
+    view.area = ratatui::layout::Rect::new(4, 2, 40, 5);
+    for row in 2..7 {
+        view.visible.push(VisibleRow {
+            index: 0,
+            row,
+            layout: Arc::clone(&layout),
+            key: EntryKey::Cell(0),
+            activity_ids: Arc::from([]),
+        });
+    }
+    let placements = view.image_placements();
+    assert_eq!(placements.len(), 2);
+    assert_eq!(placements[0].area, ratatui::layout::Rect::new(6, 2, 12, 2));
+    assert_eq!(placements[0].first_row, 1);
+    assert_eq!(placements[1].area, ratatui::layout::Rect::new(6, 5, 12, 2));
+    assert_eq!(placements[1].first_row, 0);
+}
+
+#[test]
+fn kitty_math_bracket_blocks_preserve_delimiters_for_copy_and_reflow() {
+    use crate::kitty_math::PreparedMath;
+    use crate::pets::ImageProtocol;
+    use crate::transcript_image::TranscriptImage;
+    let source = "\\[\n\\frac{a}{b}\n\\]";
+    let layout = TextLayout::with_math_lines(
+        vec!["• BRACKET".into()],
+        40,
+        vec![PreparedMath {
+            marker: "BRACKET".into(),
+            source: source.into(),
+            image: Arc::new(TranscriptImage {
+                protocol: ImageProtocol::Kitty,
+                columns: 12,
+                rows: 3,
+                pixels: image::RgbaImage::new(192, 96),
+                cell_width: 8,
+                cell_height: 16,
+            }),
+        }],
+    );
+    assert_eq!(layout.text(), source);
+    assert_eq!(layout.math_image_regions().len(), 1);
+    assert_eq!(layout.rewrap(10).text(), source);
+    assert!(layout.rewrap(10).math_image_regions().is_empty());
+    assert_eq!(layout.rewrap(10).rewrap(40).math_image_regions().len(), 1);
+}

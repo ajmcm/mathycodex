@@ -65,6 +65,27 @@ fn cell_content_layout(
     presentation: CellPresentation,
     shortcut: Option<ShortcutHint>,
 ) -> TextLayout {
+    // Graphical math belongs only to the owned rich viewport. Streaming, native
+    // scrollback, raw mode, and exports retain the existing text rendering.
+    if mode == HistoryRenderMode::Rich
+        && presentation.image_protocol == Some(crate::pets::ImageProtocol::Kitty)
+        && let Some(cell) = cell
+            .as_any()
+            .downcast_ref::<crate::history_cell::AgentMarkdownCell>()
+        && let Some((source, cwd)) = cell.kitty_math_source()
+        && let Some((rewritten, formulas)) = crate::kitty_math::prepare(source, width)
+    {
+        let lines = crate::markdown::render_markdown_agent_with_list_spacing(
+            &rewritten,
+            Some(usize::from(width.saturating_sub(2))),
+            Some(cwd),
+            None,
+            crate::markdown_render::ListSpacing::Uniform,
+        );
+        let lines =
+            crate::terminal_hyperlinks::prefix_hyperlink_lines(lines, "• ".dim(), "  ".into());
+        return TextLayout::with_math_lines(lines, width, formulas);
+    }
     let mut layout = if presentation.disclosure {
         activity_layout(
             ActivityTranscriptLines {
@@ -125,6 +146,7 @@ struct RenderState {
     background: Option<(u8, u8, u8)>,
     color_level: crate::terminal_palette::StdoutColorLevel,
     cell_size: Option<(u32, u32)>,
+    math_revision: u64,
 }
 
 struct CachedLayout {
@@ -343,6 +365,7 @@ impl LayoutCache {
             background: crate::terminal_palette::default_bg(),
             color_level: crate::terminal_palette::stdout_color_level(),
             cell_size: crate::transcript_image::terminal_cell_size(),
+            math_revision: crate::kitty_math::revision(),
         };
         if self.render_state.as_ref() != Some(&state) {
             self.entries.clear();
@@ -439,6 +462,7 @@ impl LayoutCache {
     fn evict(&mut self) {
         let retained_bytes = |entry: &CachedLayout| {
             entry.layout.text().len()
+                + entry.layout.math_image_bytes()
                 + entry
                     .layout
                     .image
