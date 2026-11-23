@@ -721,6 +721,14 @@ pub(super) fn normalize_whitespace_only_hyperlink_lines(
 }
 
 impl AgentMarkdownCell {
+    /// Only ordinary finalized assistant prose participates in graphical math.
+    pub(crate) fn kitty_math_source(&self) -> Option<(&str, &Path)> {
+        (!self.spoken_artifacts
+            && self.question_titles.is_empty()
+            && !crate::inline_visualization::contains_inline_visualization(&self.markdown_source))
+        .then_some((self.markdown_source.as_str(), self.cwd.as_path()))
+    }
+
     fn render_lines(
         &self,
         width: u16,

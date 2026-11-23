@@ -5178,6 +5178,84 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn kitty_math_instructions_reach_start_resume_and_fork_without_replacing_policy() {
+        use crate::terminal_visualization_instructions::TERMINAL_MATH_INSTRUCTIONS;
+        use crate::terminal_visualization_instructions::with_test_graphical_math;
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let mut config = build_config(&temp_dir).await;
+        config.developer_instructions = Some("Keep the existing developer policy.".into());
+        config.tui_rendering.math = true;
+        config.tui_fullscreen_transcript = true;
+        let thread_id = ThreadId::new();
+        with_test_graphical_math(true, || {
+            let start =
+                thread_start_params_from_config(&config, ThreadParamsMode::Embedded, None, None);
+            let resume = thread_resume_params_from_config(
+                config.clone(),
+                thread_id,
+                ThreadParamsMode::Embedded,
+                None,
+                ResumeModelSettings::OverrideFromCurrentConfig,
+                crate::resume_permissions::ResumePermissions::CURRENT_CONFIG,
+            );
+            let fork = thread_fork_params_from_config(
+                config.clone(),
+                thread_id,
+                ThreadParamsMode::Embedded,
+                None,
+            );
+            let expected =
+                format!("Keep the existing developer policy.\n\n{TERMINAL_MATH_INSTRUCTIONS}");
+            assert_eq!(
+                start.developer_instructions.as_deref(),
+                Some(expected.as_str())
+            );
+            assert_eq!(
+                resume.developer_instructions.as_deref(),
+                Some(expected.as_str())
+            );
+            assert_eq!(
+                fork.developer_instructions.as_deref(),
+                Some(expected.as_str())
+            );
+            let repeated = crate::terminal_visualization_instructions::with_terminal_visualization_instructions(
+                &config, Some(expected.clone()));
+            assert_eq!(repeated.as_deref(), Some(expected.as_str()));
+        });
+    }
+
+    #[tokio::test]
+    async fn kitty_math_instructions_respect_disabled_rendering_and_terminal_support() {
+        use crate::terminal_visualization_instructions::with_test_graphical_math;
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let mut config = build_config(&temp_dir).await;
+        config.tui_fullscreen_transcript = true;
+        config.tui_rendering.math = true;
+        with_test_graphical_math(false, || {
+            assert_eq!(
+                thread_start_params_from_config(&config, ThreadParamsMode::Embedded, None, None)
+                    .developer_instructions,
+                None
+            );
+        });
+        with_test_graphical_math(true, || {
+            config.tui_rendering.math = false;
+            assert_eq!(
+                thread_start_params_from_config(&config, ThreadParamsMode::Embedded, None, None)
+                    .developer_instructions,
+                None
+            );
+            config.tui_rendering.math = true;
+            config.tui_fullscreen_transcript = false;
+            assert_eq!(
+                thread_start_params_from_config(&config, ThreadParamsMode::Embedded, None, None)
+                    .developer_instructions,
+                None
+            );
+        });
+    }
+
+    #[tokio::test]
     async fn terminal_visualization_instructions_are_gated_for_all_tui_thread_flows() {
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let mut config = build_config(&temp_dir).await;

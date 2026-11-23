@@ -51,6 +51,7 @@ pub(crate) struct TextLayout {
     blocks: std::sync::OnceLock<blocks::BlockIndex>,
     pub(super) image: Option<std::sync::Arc<crate::transcript_image::TranscriptImage>>,
     pub(super) image_left_aligned: bool,
+    math_images: Vec<MathImage>,
     logical: Vec<LogicalLine>,
     text: String,
     rows: Vec<TextRow>,
@@ -59,6 +60,12 @@ pub(crate) struct TextLayout {
     pub(super) disclosure: bool,
     leading_blank_hidden: bool,
     disclosure_control: Option<DisclosureControl>,
+}
+
+#[derive(Clone)]
+struct MathImage {
+    source: Range<usize>,
+    image: Arc<crate::transcript_image::TranscriptImage>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -186,6 +193,143 @@ impl TextLayout {
         Self::from_logical(logical, width)
     }
 
+    /// Replace private rendering markers with retained LaTeX source, then reserve
+    /// image rows. Markers never enter selection, search, export, or terminal output.
+    pub(super) fn with_math_lines(
+        lines: Vec<HyperlinkLine>,
+        width: u16,
+        formulas: Vec<crate::kitty_math::PreparedMath>,
+    ) -> Self {
+        let mut output = Vec::new();
+        let mut anchors = Vec::new();
+        for line in lines {
+            let text = line.line.to_string();
+            let body = text
+                .strip_prefix("• ")
+                .or_else(|| text.strip_prefix("  "))
+                .unwrap_or(&text);
+            if let Some(formula) = formulas
+                .iter()
+                .find(|formula| formula.marker == body.trim())
+            {
+                let raw: Vec<HyperlinkLine> = formula
+                    .source
+                    .split('\n')
+                    .map(|line| {
+                        let mut line = HyperlinkLine::from(line.to_owned());
+                        line.source = Some(LogicalLineSource::from_line(&line.line));
+                        line
+                    })
+                    .collect();
+                if let (Some(first), Some(last)) = (
+                    raw.first().and_then(|line| line.source.as_ref()),
+                    raw.last().and_then(|line| line.source.as_ref()),
+                ) {
+                    anchors.push((
+                        Arc::clone(&first.text),
+                        Arc::clone(&last.text),
+                        Arc::clone(&formula.image),
+                    ));
+                }
+                output.extend(crate::terminal_hyperlinks::prefix_hyperlink_lines(
+                    raw,
+                    if text.starts_with("• ") {
+                        "• ".into()
+                    } else {
+                        "  ".into()
+                    },
+                    "  ".into(),
+                ));
+            } else {
+                output.push(line);
+            }
+        }
+        let mut layout = Self::new(output, width);
+        for (first, last, image) in anchors {
+            let mut offset = 0;
+            let mut start = None;
+            let mut end = None;
+            for line in &layout.logical {
+                if Arc::ptr_eq(&line.origin.text, &first) {
+                    start = Some(offset);
+                }
+                if Arc::ptr_eq(&line.origin.text, &last) {
+                    end = Some(offset + line.origin.range.len());
+                }
+                offset += line.origin.range.len() + 1;
+            }
+            if let (Some(start), Some(end)) = (start, end) {
+                layout.math_images.push(MathImage {
+                    source: start..end,
+                    image,
+                });
+            }
+        }
+        layout.apply_math_images();
+        layout
+    }
+
+    fn apply_math_images(&mut self) {
+        for math in self.math_images.iter().rev() {
+            if math.image.columns.saturating_add(2) > self.width {
+                continue;
+            }
+            let Some(start) = self
+                .rows
+                .iter()
+                .position(|row| row.source.start >= math.source.start)
+            else {
+                continue;
+            };
+            let end = self
+                .rows
+                .partition_point(|row| row.source.start <= math.source.end);
+            if start >= end {
+                continue;
+            }
+            let rows = (0..math.image.rows).map(|index| TextRow {
+                line: HyperlinkLine::default(),
+                source: if index == 0 {
+                    math.source.clone()
+                } else {
+                    math.source.end..math.source.end
+                },
+                line_end: (index + 1 == math.image.rows).then_some(math.source.end),
+                content_width: self.width,
+                first_column: 2,
+                prefix_columns: 2,
+                marker_only: false,
+                tabs: tabs::TabStops::default(),
+            });
+            self.rows.splice(start..end, rows);
+        }
+    }
+
+    pub(super) fn math_image_bytes(&self) -> usize {
+        self.math_images
+            .iter()
+            .map(|math| math.image.pixels.len())
+            .sum()
+    }
+
+    pub(super) fn math_image_regions(
+        &self,
+    ) -> Vec<(usize, Arc<crate::transcript_image::TranscriptImage>)> {
+        self.math_images
+            .iter()
+            .filter_map(|math| {
+                (math.image.columns.saturating_add(2) <= self.width)
+                    .then(|| {
+                        self.rows
+                            .iter()
+                            .position(|row| row.source == math.source)
+                            .map(|row| (row, Arc::clone(&math.image)))
+                    })
+                    .flatten()
+            })
+            .collect()
+    }
+
     /// Freeze the exact painted rows of a plain-text viewport, including tab stops.
     /// Trim the selectable source so word and keyboard selection stay inside the viewport.
     pub(crate) fn visible_plaintext(mut self, start: usize, height: u16) -> Self {
@@ -213,6 +357,8 @@ impl TextLayout {
     /// Reflow the same displayed content revision, retaining styles, links and disclosure label.
     pub(super) fn rewrap(&self, width: u16) -> Self {
         let mut layout = Self::from_logical(self.logical.clone(), width);
+        layout.math_images = self.math_images.clone();
+        layout.apply_math_images();
         if let Some(control) = &self.disclosure_control {
             layout = layout.with_control(control.label.clone(), control.anchor);
         }
@@ -974,6 +1120,7 @@ impl TextLayout {
             blocks: Default::default(),
             image: None,
             image_left_aligned: false,
+            math_images: Vec::new(),
             logical,
             text,
             rows,

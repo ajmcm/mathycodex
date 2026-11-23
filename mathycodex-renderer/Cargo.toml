@@ -1,0 +1,16 @@
+[package]
+name = "mathycodex-renderer"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+# Keep renderer tests independent of the full Codex application workspace.
+[workspace]
+
+[dependencies]
+pulldown-cmark = { version = "0.13", default-features = false }
+ratex-layout = "=0.1.16"
+ratex-parser = "=0.1.16"
+ratex-render = { version = "=0.1.16", features = ["embed-fonts"] }
+ratex-types = "=0.1.16"
